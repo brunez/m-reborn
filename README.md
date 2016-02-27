@@ -1,0 +1,3 @@
+# Dependencies
+jsonpickle
+Google gson

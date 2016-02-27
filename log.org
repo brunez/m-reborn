@@ -1,0 +1,155 @@
+
+* Game modes
+** Come Together
+In this mode, players must cooperate in order to win. All of them must be in the same camera frame all the time. If a Mario is right on the leftmost side of the screen, the others will not be able to advance until he walks forward. 
+
+All Marios must make it to the end alive. If one dies, it's over. This can be changed in the options, in order to make it easier. The host will be able to select how many Marios must make it to the end.
+
+* Network synchronization
+The game state is stored in the server. The clients just show the state that the server sends to them. Some events are calculated in the client, though, such as movement and some collisions. The movement is calculated in the client so that the reaction to the key presses is immediate, and not subject to latency. The actual position of the player, though, is the one calculated in the server, and if that differs with the one in the client, the client will correct it.
+** Server side
+*** Involved variables:
+- Game.frame: stores the frame currently being drawn. Every SYNC_FREQ frames the server sends the game state info over the network.
+- Game.game_state: A list of network.SpriteState that stores, for each element of the game state, a list of state variables. This list is created every time the game is synchronized. Only visible sprites are included here.
+- Position
+- life
+- direction
+- speed
+*** Involved methods:
+- Game.send_game_state()
+- Game.send_player_state()
+- Game.pay_heed()
+** Client side
+*** Involved variables:
+**** TODO 
+*** Involved methods:
+- synchronize()
+- synchronize_players()
+- pay_heed()
+
+* NPC's
+Synchronization of npc's is performed periodically. The server game (server_game.Game) sends the game_state to the clients. Clients then tell their associated Game to synchronize(game_state). This method iterates over game_state and assigns each element the corresponding values. Only visible sprites are sent for synchronization.
+The first element in the SpriteState list, when sent over the network, is a string (“sync”) so that socket managers can handle it properly.
+The list of elements to be synchronized is built in level_tools.py
+** Event sequence:
+- netgame.Game.send_game_state() #host Game
+- netgame.Game.client.send(game_state)
+- server.Server.process()
+- client.Client.process()
+- client.Client.game.synchronize(data)
+
+
+* Collisions
+Event sequence of a collision check:
+1. 1 Main loop in netgame tells sprites to check for collisions
+   1. This is done in check_collisions_prot via rect.colliderect
+2. If a collision is found, the collide method of the player sprite is called
+   1. The side is checked
+   2. The position of the player is determined depending on the side. 
+   3. The take_collision method of the struck sprite is called.
+
+Collision relationships must be unidirectional. Player checks for collisions with platforms and baddies, baddies check for collisions with platforms...
+As shown in the collision diagram, the sprites in the "arrowless" side of relationships (colliders) are responsible for checking for collisions. The sprites in the "arrowed" side of each relationship (collision_groups) are the ones that the former can collide with. 
+Collisions are managed through two types of lists:
+Collider_list: Objects that check for collisions
+Collision_group: Objects with which colliders collide
+The groups of colliders are stored in sprites.py. Every Collidable child object has an inherited add_to_collider_list() method. Colliders override this method and add themselves to the corresponding collider list.
+The collision_groups are initialized in sprites.py and follow the same approach as colliders.
+Thus, collisions are based on two sets of groups, both located in sprites.py and accessible through the sprite objects that are contained in them.
+This is the resulting collision check method in netgame.py
+ def check_collisions_prot(self):
+     for p in self.player:
+         for s in sprites.player_collision_group:                
+             if p.rect.colliderect(s.rect):
+                 p.collide(s)
+                 
+     for c in sprites.mushroom_collider_list:
+         for s in sprites.mushroom_collision_group:                
+             if c.rect.colliderect(s.rect):
+                 c.collide(s)
+                 
+     for c in sprites.baddie_collider_list:
+         for s in sprites.baddie_collision_group:                
+             if c.rect.colliderect(s.rect):
+                 c.collide(s)
+
+A more OO approach would be preferred.
+
+All Collidables have a get_hit_box() method. This can be overridden if the desired hit_box should be of a different size that the image.
+
+* Death
+** Mario’s death
+*** Involved variables:
+- Player.dead: Boolean that determines if the player is dead.
+- Player.dead_step: Used to draw the death animation.
+- Player.direction: Used to draw the death animation.
+- Player.jump_speed: Used to draw the death animation.
+
+else: #if dead
+	self.direction = 0
+	self.dead_step += 0.1
+	if self.dead_step > 0:
+		self.jump_speed = (math.pow(self.dead_step, 2) - 8)
+	if self.dead_step > 20:
+		pygame.sprite.Sprite.kill(self)
+
+
+
+
+* Key code points
+- Entry point: start.py
+- Main class: main.py
+- Main menu: menu.py
+- Network Menus: host_menu, client_menu
+- Game: game.py, client_game.py, server_game.py
+
+
+* Issues
+
+- Error: When falling and, in the way, getting just right next to a block, Mario stops falling for an instant, then starts falling again.
+  - Solution: This happened because if Mario is falling down right next to a block, a top collision might be detected. To prevent him to stop falling for an instant, we only make his jump speed 0 if he is not falling (i.e. jump speed > 0).
+
+- Error: When jumping onto a pipe while standing right next to it, the jump speed was cut to 0.
+  - Solution: This happened because the collide method in Player set jump_speed to 0 when a BOTTOM_SIDE collision was detected. I changed it so it only did that when the player was falling, not when ascending.
+
+- Error: Mario gets killed when he barely touches the enemies.
+  - Solution: Created sprtes_collide method in netgame.py, which checks if sprites collide with a certain amount of overlap
+
+- Error: Pickle EOFError
+  - Solution: When synchronizing, was trying to send 3 kb of data, but sockets only received 1024. Changed the received packet size to 4096.
+
+- Error: Collisions with the flagpole are detected way too far to the left. That's because  collisions are based in the image rect.
+  - Solution: Collidable has now a get_hit_box method. In the sprites where it's needed, the hit_box is a freely built rect. Collisions are now detected using get_hit_box.
+
+- Error: Mario goes down about 8 pixels every frame, so he collides on his sides with bricks when trying to walk.
+  - Solution:    if self.rect.bottom <= sprite.rect.top:
+              self.jump_speed = min(self.jump_speed, 0)
+
+- Error: No module named jsonpickle
+  - Solution: Including it in the path in Eclipse is not enough. It must be installed into python. I used python-pip
+		  pip install jsonpickle
+
+- Error: Segmentation fault when changing PyQt text box text
+  - Solution: Happened when trying to set it to “”. Why? Dunno. Using Qlabels works.
+	
+
+** Libraries
+*** Jsonpickle: 
+Python library for json handling. Used in level_tools.py, to load the level.
+     #Decode the level file, which is in JSON format
+     jsonpickle.set_encoder_options('simplejson', sort_keys=True)
+     f = open("../level.lvl", "r")
+     r = f.read().replace("py_object", "py/object")
+     d = jsonpickle.decode(r) 
+
+
+
+* References
+** Networking
+- http://gafferongames.com/networking-for-game-programmers/what-every-programmer-needs-to-know-about-game-networking/
+- http://udn.epicgames.com/Three/NetworkingOverview.html
+- https://developer.valvesoftware.com/wiki/Source_Multiplayer_Networking
+  - developer.valvesoftware.com/wiki/Networking_Entities
+- https://developer.valvesoftware.com/wiki/Lag_Compensation
+- http://trac.bookofhook.com/bookofhook/trac.cgi/wiki/Quake3Networking
+- http://fabiensanglard.net/quakeSource/index.php

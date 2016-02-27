@@ -1,0 +1,14 @@
+**/images/**/*
+**/bin/**/*
+**/data/**/*
+**/lib/**/*
+
+# Compiled and package files
+*.class
+*.pyc
+*.jar
+*.war
+*.ear
+
+*~
+
